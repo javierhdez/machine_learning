@@ -1,0 +1,164 @@
+---
+title: "Weight Lifting Exercise - Javier Hernandez Cano"
+output: html_notebook
+---
+
+First of all, I read this publication [HAR Study](http://groupware.les.inf.puc-rio.br/har). 
+
+Load the data in R into training/testing data:
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+training <-  read.csv("D:/DatosR/pml-training.csv")
+testing <-  read.csv("D:/DatosR/pml-testing.csv")
+```
+
+
+Split the training set into train/test data sets, and to convert the first testing data set into validation data set. The reason is to keep intact the 20 samples that are contained in "pml-testing.csv".
+
+Assign the seed to "12345" to help for the reproducibility:
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+library(caret)
+set.seed(12345)
+inTrain <- createDataPartition(y=training$classe, p=0.75, list=FALSE)
+train <- training[inTrain,]
+test <- training[-inTrain,]
+validation <- testing
+```
+
+Explore the target variable:
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+str(training$classe)
+table(training$classe)
+table(training$classe)/dim(training)[1]
+```
+
+Explore the features:
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+str(training)
+```
+
+Classify the different type of feature (factor, numeric or character):
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+var_fac <- c()
+var_num <- c()
+var_char <- c()
+for (i in 1:length(train))
+{
+  if (is.factor(train[,i]))  {var_fac<-append(var_fac,names(train[i]))}
+  if (is.numeric(train[,i])) {var_num<-append(var_num,names(train[i]))}
+  if (is.character(train[,i])) {var_char<-append(var_char,names(train[i]))}
+}
+```
+
+Now we are going to put focus in the factors:
+```{r}
+factors <- train[var_fac]
+```
+
+There are a lot of factor features that actually are numeric. So, we have to fix them.  
+Select all the wrong factors features (all factors less user_name, cvtd_timestamp, new_window, classe), and tranform them into a numeric features. 
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+library(dplyr)
+factors_wrong <- names(select(factors, -user_name, -cvtd_timestamp, -new_window, -classe))
+
+train2=train[, !(names(train) %in% factors_wrong)]
+
+for (i in factors_wrong) 
+  {train2[[i]] <- as.numeric(levels(train[[i]])[train[[i]]])}
+
+train <- train2
+#str(train)
+```
+
+
+Now, we analyze the missing values:
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+library(funModeling)
+my_data_status=df_status(train)
+#my_data_status[order(-my_data_status$p_na),]
+```
+
+Drop features with more than 95% missing values
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+vars_to_remove_na=subset(my_data_status, my_data_status$p_na > 95)
+train=train[, !(names(train) %in% vars_to_remove_na[,"variable"])]
+```
+
+Analyze the zero values, and remove features with more than 95% zero values:
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+vars_to_remove_zero=subset(my_data_status, my_data_status$p_zeros > 95)
+train=train[, !(names(train) %in% vars_to_remove_zero[,"variable"])]
+```
+
+
+Let's analyze the remaining missing values:
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+na_count <-sapply(train, function(y) sum(is.na(y)));na_count
+```
+
+we have verified that there are no missing values.
+
+It´s time to modeling:
+```{r, message=FALSE, warning=FALSE, error=FALSE, eval=FALSE}
+set.seed(4567)
+
+## Parallel Computing
+library(doParallel)
+cores <- 5
+cl <- makeCluster(cores)
+registerDoParallel(cores)
+getDoParWorkers() # Just checking, how many workers you have
+
+
+train <- select(train, -X) #drop index variable
+control <- trainControl(method = "repeatedcv",number = 10,repeats = 3)
+# rf <- train(classe ~ ., data = train, method = "rf", trControl = control)
+# saveRDS(rf, file="model_rf.rds")
+rf <- readRDS("model_rf.rds")
+rf$finalModel
+pred <- predict(rf, test)
+confusionMatrix(test$classe,pred)
+varImp(rf)
+
+
+train <- select(train, -cvtd_timestamp, -raw_timestamp_part_1,-raw_timestamp_part_2) #drop times variables
+# rf2 <- train(classe ~ ., data = train, method = "rf", trControl = control)
+# saveRDS(rf2, file="model_rf2.rds")
+rf2 <- readRDS("model_rf2.rds")
+rf2$finalModel
+pred2 <- predict(rf2, test)
+confusionMatrix(test$classe,pred2)
+varImp(rf2)
+
+
+train <- select(train, -num_window) 
+# rf3 <- train(classe ~ ., data = train, method = "rf", trControl = control)
+# saveRDS(rf3, file="model_rf3.rds")
+rf3 <- readRDS("model_rf3.rds")
+rf3$finalModel
+pred3 <- predict(rf3, test)
+confusionMatrix(test$classe,pred2)
+varImp(rf3)
+
+stopCluster(cl)
+```  
+
+I have created a random forest with k-cross valitation (with k=10).  
+In three steps, we drop the index feature (X), the times features (cvtd_timestamp, raw_timestamp_part_1,raw_timestamp_part_2) and the num_window feature, because I think without this feature the model will be more generarizable to the validation test. 
+
+The final choosen model is:
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+rf3
+confusionMatrix(test$classe,pred2)
+```
+
+
+And the importance of the variables:
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+varImp(rf3)
+```
+
+
+Predictions:
+```{r, message=FALSE, warning=FALSE, error=FALSE}
+(predictions <- predict(rf3,validation))
+```
